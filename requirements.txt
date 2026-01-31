@@ -13,3 +13,5 @@ editdistance>=0.8.1
 biopython>=1.76
 numba>=0.58
 coverage>=7.6
+# Optional: high-performance GTF/FASTA parsing (use --use_ecclib flag)
+# eccLib>=1.0

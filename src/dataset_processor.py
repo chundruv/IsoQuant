@@ -21,6 +21,8 @@ import gffutils
 import pysam
 from pyfaidx import Fasta
 
+from .file_parsers import create_fasta_reader
+
 from .modes import IsoQuantMode
 from .common import proper_plural_form, large_output_enabled
 from .error_codes import IsoQuantExitCode
@@ -88,7 +90,12 @@ class DatasetProcessor:
 
         if self.args.needs_reference:
             logger.info("Loading reference genome from %s" % self.args.reference)
-            self.reference_record_dict = Fasta(self.args.reference, indexname=args.fai_file_name)
+            use_ecclib = getattr(self.args, 'use_ecclib', False)
+            self.reference_record_dict = create_fasta_reader(
+                self.args.reference,
+                index_path=args.fai_file_name,
+                use_ecclib=use_ecclib
+            )
         else:
             self.reference_record_dict = None
         self.chr_ids = []

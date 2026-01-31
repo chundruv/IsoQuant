@@ -245,6 +245,9 @@ def parse_args(cmd_args=None, namespace=None):
     add_additional_option_to_group(pipeline_args_group, "--keep_tmp", help="do not remove temporary files "
                                                                            "in the end", action='store_true',
                                    default=False)
+    add_additional_option_to_group(pipeline_args_group, "--use_ecclib",
+                                   help="use eccLib for faster GTF/FASTA parsing (requires eccLib to be installed)",
+                                   action='store_true', default=False)
 
     # OUTPUT SETUP
     output_setup_args_group.add_argument('--check_canonical', action='store_true', default=False,
@@ -1036,6 +1039,19 @@ def run_pipeline(args):
     logger.info("gffutils version: %s" % gffutils.__version__)
     logger.info("pysam version: %s" % pysam.__version__)
     logger.info("pyfaidx version: %s" % pyfaidx.__version__)
+    if args.use_ecclib:
+        try:
+            from src.file_parsers import is_ecclib_available, ECCLIB_AVAILABLE
+            if ECCLIB_AVAILABLE:
+                import eccLib
+                ecclib_version = getattr(eccLib, '__version__', 'unknown')
+                logger.info("eccLib version: %s (available: %s)" % (ecclib_version, is_ecclib_available()))
+            else:
+                logger.warning("eccLib requested but not installed, will use default parsers")
+                args.use_ecclib = False
+        except ImportError as e:
+            logger.warning("eccLib requested but import failed: %s" % e)
+            args.use_ecclib = False
     if args.mode.needs_barcode_calling():
         # call barcodes
         call_barcodes(args)
