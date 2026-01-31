@@ -1040,18 +1040,9 @@ def run_pipeline(args):
     logger.info("pysam version: %s" % pysam.__version__)
     logger.info("pyfaidx version: %s" % pyfaidx.__version__)
     if args.use_ecclib:
-        try:
-            from src.file_parsers import is_ecclib_available, ECCLIB_AVAILABLE
-            if ECCLIB_AVAILABLE:
-                import eccLib
-                ecclib_version = getattr(eccLib, '__version__', 'unknown')
-                logger.info("eccLib version: %s (available: %s)" % (ecclib_version, is_ecclib_available()))
-            else:
-                logger.warning("eccLib requested but not installed, will use default parsers")
-                args.use_ecclib = False
-        except ImportError as e:
-            logger.warning("eccLib requested but import failed: %s" % e)
-            args.use_ecclib = False
+        # --use_ecclib enables in-memory GTF store (skips SQLite database creation)
+        # Note: eccLib FASTA parsing is disabled due to stability issues, pyfaidx is used instead
+        logger.info("In-memory GTF mode enabled (--use_ecclib): skipping database creation")
     if args.mode.needs_barcode_calling():
         # call barcodes
         call_barcodes(args)

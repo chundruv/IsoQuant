@@ -29,26 +29,22 @@ logger = logging.getLogger('IsoQuant')
 
 # Check eccLib availability and functionality
 ECCLIB_AVAILABLE = False
-ECCLIB_WORKING = False
+ECCLIB_FASTA_WORKING = False  # eccLib FASTA parsing is unstable on many platforms
 
 try:
     import eccLib
     ECCLIB_AVAILABLE = True
-    # Test if eccLib actually works on this platform
-    # Some platforms may have the library but it may crash
-    try:
-        # Quick sanity check - just ensure the module has expected functions
-        if hasattr(eccLib, 'parseFASTA') and hasattr(eccLib, 'parseGTF'):
-            ECCLIB_WORKING = True
-    except Exception:
-        ECCLIB_WORKING = False
+    # Note: eccLib's parseFASTA() is known to segfault on some platforms
+    # We disable it by default and only use our pure Python GTF parser
+    # which doesn't rely on eccLib's C code for parsing
+    ECCLIB_FASTA_WORKING = False  # Disabled due to stability issues
 except ImportError:
     pass
 
 
 def is_ecclib_available():
-    """Check if eccLib is available and appears to be working."""
-    return ECCLIB_AVAILABLE and ECCLIB_WORKING
+    """Check if eccLib is available for FASTA parsing (currently disabled)."""
+    return ECCLIB_AVAILABLE and ECCLIB_FASTA_WORKING
 
 
 class FASTAReaderInterface(ABC):
