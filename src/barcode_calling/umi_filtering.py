@@ -20,6 +20,7 @@ import editdistance
 import gffutils
 
 from src.assignment_loader import create_merging_assignment_loader
+from src.gtf2db import load_gene_db
 from src.isoform_assignment import MatchEventSubtype, ReadAssignment
 
 logger = logging.getLogger('IsoQuant')
@@ -594,18 +595,19 @@ def filter_bam(in_file_name: str, out_file_name: str, read_set: Set[str]):
     pysam.index(out_file_name)
 
 
-def create_transcript_info_dict(genedb: str, chr_ids: Optional[List[str]] = None) -> Dict[str, Tuple[str, int]]:
+def create_transcript_info_dict(genedb: str, chr_ids: Optional[List[str]] = None, use_inmemory: bool = False) -> Dict[str, Tuple[str, int]]:
     """
     Create dictionary of transcript types and polyA sites from gene database.
 
     Args:
-        genedb: Path to gffutils database
+        genedb: Path to gffutils database or GTF file
         chr_ids: Optional list of chromosome IDs to filter
+        use_inmemory: If True, load GTF directly into memory
 
     Returns:
         Dict mapping transcript_id to (transcript_type, polya_site) tuple
     """
-    gffutils_db = gffutils.FeatureDB(genedb)
+    gffutils_db = load_gene_db(genedb, use_inmemory=use_inmemory)
     transcript_type_dict = {}
 
     for t in gffutils_db.features_of_type(('transcript', 'mRNA')):

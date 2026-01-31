@@ -17,8 +17,28 @@ from traceback import print_exc
 import gzip
 
 from .error_codes import IsoQuantExitCode
+from .gtf_store import load_gtf as load_gtf_inmemory, InMemoryFeatureDB
 
 logger = logging.getLogger('IsoQuant')
+
+
+def load_gene_db(genedb_path: str, use_inmemory: bool = False):
+    """
+    Load gene database from path.
+
+    Args:
+        genedb_path: Path to .db file (gffutils) or .gtf file (in-memory)
+        use_inmemory: If True, load GTF directly into memory (faster startup, no disk)
+
+    Returns:
+        gffutils.FeatureDB or InMemoryFeatureDB
+    """
+    if use_inmemory:
+        # Load GTF directly into memory - no database needed
+        return load_gtf_inmemory(genedb_path)
+    else:
+        # Use traditional gffutils SQLite database
+        return gffutils.FeatureDB(genedb_path)
 
 
 def db2gtf(db, gtf, _=None):
@@ -143,8 +163,22 @@ def gtf2db(gtf, db, complete_db=False, check_gtf=True):
 def convert_gtf_to_db(args):
     gtf_filename = args.genedb
     gtf_filename = os.path.abspath(gtf_filename)
+
+    # Check if using in-memory mode (skip database creation)
+    use_inmemory = getattr(args, 'use_ecclib', False)
+    if use_inmemory:
+        logger.info("Using in-memory GTF store (--use_ecclib), skipping database creation")
+        # Store the GTF path and set flag for in-memory mode
+        args.use_inmemory_genedb = True
+        args.gtf_filename = gtf_filename
+        # Still do GTF validation if enabled
+        if args.gtf_check:
+            check_input_gtf(gtf_filename, gtf_filename + ".db", args.complete_genedb)
+        return gtf_filename
+
     genedb_filename = args.genedb_filename
     gtf_filename, genedb_filename = convert_db(gtf_filename, genedb_filename, gtf2db, args)
+    args.use_inmemory_genedb = False
     return genedb_filename
 
 

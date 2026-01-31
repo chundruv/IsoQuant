@@ -22,6 +22,7 @@ import pysam
 from pyfaidx import Fasta
 
 from .file_parsers import create_fasta_reader
+from .gtf2db import load_gene_db
 
 from .modes import IsoQuantMode
 from .common import proper_plural_form, large_output_enabled
@@ -81,10 +82,11 @@ class DatasetProcessor:
 
         if args.genedb:
             logger.info("Loading gene database from " + self.args.genedb)
-            self.gffutils_db = gffutils.FeatureDB(self.args.genedb)
+            use_inmemory = getattr(self.args, 'use_inmemory_genedb', False)
+            self.gffutils_db = load_gene_db(self.args.genedb, use_inmemory=use_inmemory)
             # TODO remove
             if self.args.mode.needs_pcr_deduplication():
-                self.transcript_type_dict = create_transcript_info_dict(self.args.genedb)
+                self.transcript_type_dict = create_transcript_info_dict(self.args.genedb, use_inmemory=use_inmemory)
         else:
             self.gffutils_db = None
 
@@ -260,8 +262,8 @@ class DatasetProcessor:
             ))
 
         gene_annotation_chromosomes = set()
-        gffutils_db = gffutils.FeatureDB(self.args.genedb)
-        for feature in gffutils_db.all_features():
+        # Use already loaded database instead of creating a new one
+        for feature in self.gffutils_db.all_features():
             gene_annotation_chromosomes.add(feature.seqid)
         gene_annotation_chromosomes = self.keep_only_defined_chromosomes(gene_annotation_chromosomes)
 

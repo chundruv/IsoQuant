@@ -13,6 +13,7 @@ import pysam
 from pyfaidx import Fasta
 
 from .file_parsers import create_fasta_reader
+from .gtf2db import load_gene_db
 
 from .stats import EnumStats
 from .alignment_processor import AlignmentCollector
@@ -132,7 +133,8 @@ def collect_reads_in_parallel(sample, chr_id, chr_ids, args, processed_read_mana
             alignment_stat_counter = EnumStats(bamstat_file)
 
             # Build string pools for loading serialized data
-            gffutils_db = gffutils.FeatureDB(args.genedb) if args.genedb else None
+            use_inmemory = getattr(args, 'use_inmemory_genedb', False)
+            gffutils_db = load_gene_db(args.genedb, use_inmemory=use_inmemory) if args.genedb else None
             string_pools = setup_string_pools(args, sample, chr_ids, chr_id, gffutils_db,
                                               load_barcode_pool=True, load_tsv_pools=True)
 
@@ -160,7 +162,8 @@ def collect_reads_in_parallel(sample, chr_id, chr_ids, args, processed_read_mana
     tmp_printer = TmpFileAssignmentPrinter(save_file, args)
     bam_files = list(map(lambda x: x[0], sample.file_list))
     bam_file_pairs = [(pysam.AlignmentFile(bam, "rb", require_index=True), bam) for bam in bam_files]
-    gffutils_db = gffutils.FeatureDB(args.genedb) if args.genedb else None
+    use_inmemory = getattr(args, 'use_inmemory_genedb', False)
+    gffutils_db = load_gene_db(args.genedb, use_inmemory=use_inmemory) if args.genedb else None
     illumina_bam = sample.illumina_bam
 
     # Build string pools for memory optimization
@@ -219,7 +222,8 @@ def construct_models_in_parallel(sample, chr_id, chr_ids, saves_prefix, args, re
     load_dynamic_pools(string_pools, dynamic_pools_file_name(saves_prefix, chr_id))
 
     use_ecclib = getattr(args, 'use_ecclib', False)
-    loader = create_assignment_loader(chr_id, saves_prefix, args.genedb, args.reference, args.fai_file_name, string_pools, use_filtered_reads, use_ecclib=use_ecclib)
+    use_inmemory = getattr(args, 'use_inmemory_genedb', False)
+    loader = create_assignment_loader(chr_id, saves_prefix, args.genedb, args.reference, args.fai_file_name, string_pools, use_filtered_reads, use_ecclib=use_ecclib, use_inmemory_genedb=use_inmemory)
 
     chr_dump_file = saves_file_name(saves_prefix, chr_id)
     lock_file = reads_processed_lock_file_name(saves_prefix, chr_id)
