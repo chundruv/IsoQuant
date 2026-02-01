@@ -273,10 +273,17 @@ class DatasetProcessor:
                 reverse=True,
             ))
 
-        gene_annotation_chromosomes = set()
-        # Use already loaded database instead of creating a new one
-        for feature in self.gffutils_db.all_features():
-            gene_annotation_chromosomes.add(feature.seqid)
+        # Get chromosome names from annotation
+        if self._use_inmemory:
+            # In-memory mode: use lightweight chromosome extraction
+            if self._gtf_chromosomes is None:
+                self._gtf_chromosomes = get_gtf_chromosomes(self.args.genedb)
+            gene_annotation_chromosomes = self._gtf_chromosomes
+        else:
+            # Traditional mode: use loaded gffutils database
+            gene_annotation_chromosomes = set()
+            for feature in self.gffutils_db.all_features():
+                gene_annotation_chromosomes.add(feature.seqid)
         gene_annotation_chromosomes = self.keep_only_defined_chromosomes(gene_annotation_chromosomes)
 
         common_overlap = gene_annotation_chromosomes.intersection(bam_genome_overlap)
