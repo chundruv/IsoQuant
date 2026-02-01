@@ -21,6 +21,10 @@ from .gtf_store import load_gtf as load_gtf_inmemory, InMemoryFeatureDB
 
 logger = logging.getLogger('IsoQuant')
 
+# Module-level cache for in-memory GTF databases
+# This ensures the GTF is only loaded once per process
+_gtf_cache = {}
+
 
 def load_gene_db(genedb_path: str, use_inmemory: bool = False):
     """
@@ -34,11 +38,24 @@ def load_gene_db(genedb_path: str, use_inmemory: bool = False):
         gffutils.FeatureDB or InMemoryFeatureDB
     """
     if use_inmemory:
-        # Load GTF directly into memory - no database needed
-        return load_gtf_inmemory(genedb_path)
+        # Check cache first - avoid loading GTF multiple times per process
+        if genedb_path in _gtf_cache:
+            logger.debug(f"Using cached GTF database for {genedb_path}")
+            return _gtf_cache[genedb_path]
+
+        # Load GTF directly into memory and cache it
+        db = load_gtf_inmemory(genedb_path)
+        _gtf_cache[genedb_path] = db
+        return db
     else:
-        # Use traditional gffutils SQLite database
+        # Use traditional gffutils SQLite database (no caching needed - SQLite handles it)
         return gffutils.FeatureDB(genedb_path)
+
+
+def clear_gtf_cache():
+    """Clear the GTF cache to free memory."""
+    global _gtf_cache
+    _gtf_cache.clear()
 
 
 def db2gtf(db, gtf, _=None):
