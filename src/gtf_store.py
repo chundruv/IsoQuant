@@ -422,6 +422,43 @@ def load_gtf(gtf_path: str, feature_types: Set[str] = None) -> InMemoryFeatureDB
     return db
 
 
+def get_gtf_chromosomes(gtf_path: str) -> Set[str]:
+    """
+    Quickly extract unique chromosome names from a GTF file.
+
+    This is a lightweight alternative to loading the full GTF when you
+    only need chromosome names (e.g., for chromosome filtering).
+
+    Args:
+        gtf_path: Path to GTF file (can be gzipped)
+
+    Returns:
+        Set of chromosome/seqid names
+    """
+    logger.info(f"Scanning GTF for chromosome names: {gtf_path}")
+
+    chromosomes = set()
+
+    # Open file (handle gzip)
+    if gtf_path.endswith('.gz'):
+        opener = gzip.open(gtf_path, 'rt')
+    else:
+        opener = open(gtf_path, 'r')
+
+    with opener as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            # Just extract the first column (seqid/chromosome)
+            tab_pos = line.find('\t')
+            if tab_pos > 0:
+                chromosomes.add(line[:tab_pos])
+
+    logger.info(f"Found {len(chromosomes)} chromosomes in GTF")
+    return chromosomes
+
+
 # Convenience function for drop-in replacement
 def FeatureDB(path: str, **kwargs) -> InMemoryFeatureDB:
     """

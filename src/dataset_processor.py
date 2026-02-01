@@ -23,6 +23,7 @@ from pyfaidx import Fasta
 
 from .file_parsers import create_fasta_reader
 from .gtf2db import load_gene_db
+from .gtf_store import get_gtf_chromosomes
 
 from .modes import IsoQuantMode
 from .common import proper_plural_form, large_output_enabled
@@ -80,10 +81,21 @@ class DatasetProcessor:
         self.alignment_stat_counter = EnumStats()
         self.transcript_type_dict = {}
 
+        use_inmemory = getattr(self.args, 'use_inmemory_genedb', False)
+        self._use_inmemory = use_inmemory
+        self._gtf_chromosomes = None  # Cached chromosome names for in-memory mode
+
         if args.genedb:
-            logger.info("Loading gene database from " + self.args.genedb)
-            use_inmemory = getattr(self.args, 'use_inmemory_genedb', False)
-            self.gffutils_db = load_gene_db(self.args.genedb, use_inmemory=use_inmemory)
+            if use_inmemory:
+                # In-memory mode: don't load full GTF in main process
+                # Workers will load their own copies as needed
+                logger.info("In-memory mode: GTF will be loaded by worker processes")
+                self.gffutils_db = None
+            else:
+                # Traditional mode: load SQLite database in main process
+                logger.info("Loading gene database from " + self.args.genedb)
+                self.gffutils_db = load_gene_db(self.args.genedb, use_inmemory=False)
+
             # TODO remove
             if self.args.mode.needs_pcr_deduplication():
                 self.transcript_type_dict = create_transcript_info_dict(self.args.genedb, use_inmemory=use_inmemory)
@@ -332,7 +344,8 @@ class DatasetProcessor:
         else:
             results = map(*read_gen)
 
-        sample_procesed_read_manager = processed_read_manager_type(sample, self.args.multimap_strategy, chr_ids, self.args.genedb)
+        use_inmemory = getattr(self.args, 'use_inmemory_genedb', False)
+        sample_procesed_read_manager = processed_read_manager_type(sample, self.args.multimap_strategy, chr_ids, self.args.genedb, use_inmemory)
         logger.info("Counting multimapped reads")
         for chr_id, read_groups, alignment_stats, processed_reads in results:
             logger.info("Counting reads from %s" % chr_id)

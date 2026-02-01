@@ -124,7 +124,8 @@ def collect_reads_in_parallel(sample, chr_id, chr_ids, args, processed_read_mana
     save_file = sample.get_save_file(chr_id)
     group_file = read_groups_file_name(save_file)
     bamstat_file = bamstat_file_name(save_file)
-    processed_reads_manager = processed_read_manager_type(sample, args.multimap_strategy, chr_ids, args.genedb)
+    use_inmemory = getattr(args, 'use_inmemory_genedb', False)
+    processed_reads_manager = processed_read_manager_type(sample, args.multimap_strategy, chr_ids, args.genedb, use_inmemory)
 
     if os.path.exists(lock_file) and args.resume:
         logger.info("Detected processed reads for " + chr_id)
