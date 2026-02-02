@@ -198,6 +198,15 @@ class InMemoryFeatureDB:
                     self._children[tx_id].append(feature)
                     self._parents[feature.id].append(self._features[tx_id])
 
+        # Build transcript -> CDS/UTR/codon relationships
+        for feature_type in ('CDS', 'UTR', 'five_prime_UTR', 'three_prime_UTR',
+                             'start_codon', 'stop_codon'):
+            for feature in self._by_type.get(feature_type, []):
+                tx_id = feature.attributes.get('transcript_id', [''])[0]
+                if tx_id and tx_id in self._features:
+                    self._children[tx_id].append(feature)
+                    self._parents[feature.id].append(self._features[tx_id])
+
         # Sort exons by position
         for tx_id in self._transcript_exons:
             self._transcript_exons[tx_id].sort(key=lambda x: x.start)
