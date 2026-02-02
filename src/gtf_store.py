@@ -51,15 +51,18 @@ class GTFFeature:
             return self.attributes.get('transcript_id', [''])[0]
         elif self.featuretype == 'exon':
             # Exons may not have unique IDs, construct one
-            gene_id = self.attributes.get('gene_id', [''])[0]
             tx_id = self.attributes.get('transcript_id', [''])[0]
             exon_num = self.attributes.get('exon_number', [''])[0]
-            return f"{tx_id}_exon_{exon_num}" if exon_num else f"{tx_id}_{self.start}_{self.end}"
+            return f"{tx_id}_exon_{exon_num}" if exon_num else f"{tx_id}_exon_{self.start}_{self.end}"
+        elif self.featuretype in ('CDS', 'UTR', 'five_prime_UTR', 'three_prime_UTR',
+                                   'start_codon', 'stop_codon'):
+            # These features need unique IDs based on transcript + position
+            tx_id = self.attributes.get('transcript_id', [''])[0]
+            return f"{tx_id}_{self.featuretype}_{self.start}_{self.end}"
         else:
-            # For other features, try common ID attributes
-            for attr in ('ID', 'gene_id', 'transcript_id'):
-                if attr in self.attributes:
-                    return self.attributes[attr][0]
+            # For other features, try common ID attributes or construct one
+            if 'ID' in self.attributes:
+                return self.attributes['ID'][0]
             return f"{self.seqid}_{self.featuretype}_{self.start}_{self.end}"
 
     def __getitem__(self, key: str) -> Any:
@@ -79,6 +82,29 @@ class GTFFeature:
                 self.start == other.start and
                 self.end == other.end and
                 self.strand == other.strand)
+
+    def __str__(self) -> str:
+        """Return GTF format string for this feature."""
+        # Format attributes as GTF attribute string
+        attr_parts = []
+        for key, values in self.attributes.items():
+            for value in values:
+                attr_parts.append(f'{key} "{value}"')
+        attr_str = '; '.join(attr_parts)
+        if attr_str:
+            attr_str += ';'
+
+        return '\t'.join([
+            self.seqid,
+            self.source,
+            self.featuretype,
+            str(self.start),
+            str(self.end),
+            self.score,
+            self.strand,
+            self.frame,
+            attr_str
+        ])
 
 
 class IntervalTree:
@@ -213,13 +239,14 @@ class InMemoryFeatureDB:
 
         self._indexed = True
 
-    def features_of_type(self, featuretype, order_by=None) -> Iterator[GTFFeature]:
+    def features_of_type(self, featuretype, order_by=None, limit=None) -> Iterator[GTFFeature]:
         """
         Get all features of a given type (gffutils compatibility).
 
         Args:
             featuretype: str or tuple of feature types
             order_by: Optional tuple of (attribute, 'start') for sorting
+            limit: Optional region string "seqid:start-end" to filter by location
         """
         self._build_relationships()
 
@@ -229,6 +256,20 @@ class InMemoryFeatureDB:
         features = []
         for ft in featuretype:
             features.extend(self._by_type.get(ft, []))
+
+        # Apply region limit if specified
+        if limit:
+            # Parse limit string like "chr1:1000-2000" or "chr1"
+            if ':' in limit:
+                seqid, coords = limit.split(':', 1)
+                if '-' in coords:
+                    start, end = map(int, coords.split('-'))
+                else:
+                    start, end = int(coords), float('inf')
+            else:
+                seqid = limit
+                start, end = 0, float('inf')
+            features = [f for f in features if f.seqid == seqid and f.start >= start and f.end <= end]
 
         if order_by:
             if isinstance(order_by, tuple) and 'start' in order_by:
@@ -243,7 +284,7 @@ class InMemoryFeatureDB:
         return iter(self._features.values())
 
     def region(self, seqid: str = None, start: int = None, end: int = None,
-               featuretype: str = None, strand: str = None) -> Iterator[GTFFeature]:
+               featuretype=None, strand: str = None) -> Iterator[GTFFeature]:
         """
         Get features overlapping a region (gffutils compatibility).
 
@@ -251,7 +292,7 @@ class InMemoryFeatureDB:
             seqid: Chromosome/contig name
             start: Start position (1-based)
             end: End position (1-based)
-            featuretype: Optional filter by feature type
+            featuretype: Optional filter by feature type (str or tuple)
             strand: Optional filter by strand
         """
         self._build_relationships()
@@ -268,8 +309,13 @@ class InMemoryFeatureDB:
         if end is None:
             end = float('inf')
 
+        # Normalize featuretype to tuple for consistent comparison
+        if featuretype is not None:
+            if isinstance(featuretype, str):
+                featuretype = (featuretype,)
+
         for feature in self._intervals[seqid].query(start, end):
-            if featuretype and feature.featuretype != featuretype:
+            if featuretype and feature.featuretype not in featuretype:
                 continue
             if strand and feature.strand != strand:
                 continue
