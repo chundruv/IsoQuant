@@ -325,6 +325,10 @@ class InMemoryFeatureDB:
         """
         Get children of a feature (gffutils compatibility).
 
+        This returns ALL descendants that match the featuretype, not just direct
+        children. This matches gffutils behavior where gene.children(featuretype='exon')
+        returns all exons under that gene (via transcripts).
+
         Args:
             feature: GTFFeature or feature ID
             featuretype: Optional filter by type (str or tuple)
@@ -337,17 +341,32 @@ class InMemoryFeatureDB:
         else:
             feature_id = feature.id
 
-        children = self._children.get(feature_id, [])
-
+        # Normalize featuretype to tuple
         if featuretype:
             if isinstance(featuretype, str):
                 featuretype = (featuretype,)
-            children = [c for c in children if c.featuretype in featuretype]
+
+        # Collect all descendants recursively
+        all_descendants = []
+        visited = set()
+
+        def collect_descendants(fid):
+            if fid in visited:
+                return
+            visited.add(fid)
+            for child in self._children.get(fid, []):
+                # Add this child if it matches the featuretype (or no filter)
+                if featuretype is None or child.featuretype in featuretype:
+                    all_descendants.append(child)
+                # Always recurse to find deeper descendants
+                collect_descendants(child.id)
+
+        collect_descendants(feature_id)
 
         if order_by == 'start':
-            children = sorted(children, key=lambda f: f.start)
+            all_descendants = sorted(all_descendants, key=lambda f: f.start)
 
-        return iter(children)
+        return iter(all_descendants)
 
     def parents(self, feature, featuretype=None) -> Iterator[GTFFeature]:
         """Get parents of a feature."""
