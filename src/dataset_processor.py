@@ -104,11 +104,9 @@ class DatasetProcessor:
 
         if self.args.needs_reference:
             logger.info("Loading reference genome from %s" % self.args.reference)
-            use_ecclib = getattr(self.args, 'use_ecclib', False)
             self.reference_record_dict = create_fasta_reader(
                 self.args.reference,
-                index_path=args.fai_file_name,
-                use_ecclib=use_ecclib
+                index_path=args.fai_file_name
             )
         else:
             self.reference_record_dict = None

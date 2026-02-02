@@ -224,8 +224,8 @@ def load_genedb(genedb, use_inmemory=False):
     return None
 
 
-def create_assignment_loader(chr_id, saves_prefix, genedb, reference_fasta, reference_fai, string_pools, use_filtered_reads=False, use_ecclib=False, use_inmemory_genedb=False):
-    fasta_reader = create_fasta_reader(reference_fasta, index_path=reference_fai, use_ecclib=use_ecclib)
+def create_assignment_loader(chr_id, saves_prefix, genedb, reference_fasta, reference_fai, string_pools, use_filtered_reads=False, use_inmemory_genedb=False):
+    fasta_reader = create_fasta_reader(reference_fasta, index_path=reference_fai)
     current_chr_record = fasta_reader[chr_id]
     multimapped_reads = prepare_multimapped_reads(saves_prefix, chr_id, string_pools)
     filtered_reads = prepare_read_filter(chr_id, saves_prefix, use_filtered_reads)

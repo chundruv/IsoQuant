@@ -181,10 +181,10 @@ def convert_gtf_to_db(args):
     gtf_filename = args.genedb
     gtf_filename = os.path.abspath(gtf_filename)
 
-    # Check if using in-memory mode (skip database creation)
-    use_inmemory = getattr(args, 'use_ecclib', False)
+    # Check if using fast/in-memory mode (skip database creation)
+    use_inmemory = getattr(args, 'fast', False)
     if use_inmemory:
-        logger.info("Using in-memory GTF store (--use_ecclib), skipping database creation")
+        logger.info("Using in-memory GTF store (--fast), skipping database creation")
         # Store the GTF path and set flag for in-memory mode
         args.use_inmemory_genedb = True
         args.gtf_filename = gtf_filename

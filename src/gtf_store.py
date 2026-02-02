@@ -473,7 +473,7 @@ def FeatureDB(path: str, **kwargs) -> InMemoryFeatureDB:
         raise ValueError(
             f"Cannot load .db file with in-memory store. "
             f"Use gtf_store.load_gtf() with the original GTF file, "
-            f"or pass --use_ecclib to skip database creation."
+            f"or pass --fast to skip database creation."
         )
 
     return load_gtf(path, **kwargs)

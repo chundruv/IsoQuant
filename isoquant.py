@@ -245,8 +245,8 @@ def parse_args(cmd_args=None, namespace=None):
     add_additional_option_to_group(pipeline_args_group, "--keep_tmp", help="do not remove temporary files "
                                                                            "in the end", action='store_true',
                                    default=False)
-    add_additional_option_to_group(pipeline_args_group, "--use_ecclib",
-                                   help="use eccLib for faster GTF/FASTA parsing (requires eccLib to be installed)",
+    add_additional_option_to_group(pipeline_args_group, "--fast",
+                                   help="use in-memory GTF store for faster startup (skips SQLite database creation)",
                                    action='store_true', default=False)
 
     # OUTPUT SETUP
@@ -1039,10 +1039,9 @@ def run_pipeline(args):
     logger.info("gffutils version: %s" % gffutils.__version__)
     logger.info("pysam version: %s" % pysam.__version__)
     logger.info("pyfaidx version: %s" % pyfaidx.__version__)
-    if args.use_ecclib:
-        # --use_ecclib enables in-memory GTF store (skips SQLite database creation)
-        # Note: eccLib FASTA parsing is disabled due to stability issues, pyfaidx is used instead
-        logger.info("In-memory GTF mode enabled (--use_ecclib): skipping database creation")
+    if args.fast:
+        # --fast enables in-memory GTF store (skips SQLite database creation)
+        logger.info("Fast mode enabled (--fast): using in-memory GTF store, skipping database creation")
     if args.mode.needs_barcode_calling():
         # call barcodes
         call_barcodes(args)

@@ -114,8 +114,7 @@ def load_barcode_dict(sample, chr_id):
 
 
 def collect_reads_in_parallel(sample, chr_id, chr_ids, args, processed_read_manager_type):
-    use_ecclib = getattr(args, 'use_ecclib', False)
-    fasta_reader = create_fasta_reader(args.reference, index_path=args.fai_file_name, use_ecclib=use_ecclib)
+    fasta_reader = create_fasta_reader(args.reference, index_path=args.fai_file_name)
     current_chr_record = fasta_reader[chr_id]
     if args.high_memory:
         current_chr_record = str(current_chr_record)
@@ -222,9 +221,8 @@ def construct_models_in_parallel(sample, chr_id, chr_ids, saves_prefix, args, re
     # Load dynamic pools (for read groups from BAM tags/read IDs)
     load_dynamic_pools(string_pools, dynamic_pools_file_name(saves_prefix, chr_id))
 
-    use_ecclib = getattr(args, 'use_ecclib', False)
     use_inmemory = getattr(args, 'use_inmemory_genedb', False)
-    loader = create_assignment_loader(chr_id, saves_prefix, args.genedb, args.reference, args.fai_file_name, string_pools, use_filtered_reads, use_ecclib=use_ecclib, use_inmemory_genedb=use_inmemory)
+    loader = create_assignment_loader(chr_id, saves_prefix, args.genedb, args.reference, args.fai_file_name, string_pools, use_filtered_reads, use_inmemory_genedb=use_inmemory)
 
     chr_dump_file = saves_file_name(saves_prefix, chr_id)
     lock_file = reads_processed_lock_file_name(saves_prefix, chr_id)
