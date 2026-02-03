@@ -24,6 +24,7 @@ import logging
 from collections import defaultdict
 from bisect import bisect_left, bisect_right
 from dataclasses import dataclass, field
+import sys
 from typing import Dict, List, Optional, Set, Iterator, Tuple, Any
 
 logger = logging.getLogger('IsoQuant')
@@ -31,9 +32,10 @@ logger = logging.getLogger('IsoQuant')
 
 @dataclass
 class GTFFeature:
+    # 1. 'id' is in slots, so we must REMOVE the @property def id method below
     __slots__ = ('seqid', 'source', 'featuretype', 'start', 'end', 
                  'score', 'strand', 'frame', 'attributes', 'id', 
-                 'children', 'extra', 'file_order') # Added file_order
+                 'children', 'extra', 'file_order')
 
     def __init__(self, seqid, source, featuretype, start, end, 
                  score, strand, frame, attributes, feature_id, file_order):
@@ -45,41 +47,21 @@ class GTFFeature:
         self.score = score
         self.strand = strand
         self.frame = frame
-        self.attributes = attributes # Keep this as the DICT for lookups
-        self.id = feature_id
-        self.file_order = file_order # For stable sorting
+        self.attributes = attributes
+        self.id = feature_id        # Stored once, never recalculated
+        self.file_order = file_order # Crucial for 100% determinism
         self.children = []
-        self.extra = [] # gffutils often has this
+        self.extra = []
+
+    # 2. Add this to ensure IsoQuant sees the attributes exactly as gffutils would
+    def __getitem__(self, key):
+        return self.attributes.get(key)
         
     def __str__(self):
-        # Reconstruct exactly like gffutils or use raw if stored
-        # gffutils usually does: key "value"; key "value";
+        # Reconstruct attribute string for output/hashing
         attr_str = "; ".join([f'{k} "{v[0]}"' for k, v in self.attributes.items()])
         return f"{self.seqid}\t{self.source}\t{self.featuretype}\t{self.start}\t{self.end}\t{self.score}\t{self.strand}\t{self.frame}\t{attr_str}"
     
-    @property
-    def id(self) -> str:
-        """Get the primary ID for this feature."""
-        if self.featuretype == 'gene':
-            return self.attributes.get('gene_id', [''])[0]
-        elif self.featuretype in ('transcript', 'mRNA'):
-            return self.attributes.get('transcript_id', [''])[0]
-        elif self.featuretype == 'exon':
-            # Exons may not have unique IDs, construct one
-            tx_id = self.attributes.get('transcript_id', [''])[0]
-            exon_num = self.attributes.get('exon_number', [''])[0]
-            return f"{tx_id}_exon_{exon_num}" if exon_num else f"{tx_id}_exon_{self.start}_{self.end}"
-        elif self.featuretype in ('CDS', 'UTR', 'five_prime_UTR', 'three_prime_UTR',
-                                   'start_codon', 'stop_codon'):
-            # These features need unique IDs based on transcript + position
-            tx_id = self.attributes.get('transcript_id', [''])[0]
-            return f"{tx_id}_{self.featuretype}_{self.start}_{self.end}"
-        else:
-            # For other features, try common ID attributes or construct one
-            if 'ID' in self.attributes:
-                return self.attributes['ID'][0]
-            return f"{self.seqid}_{self.featuretype}_{self.start}_{self.end}"
-
     def __getitem__(self, key: str) -> Any:
         """Allow dict-like attribute access for gffutils compatibility."""
         if hasattr(self, key):
@@ -481,20 +463,36 @@ def load_gtf(gtf_path: str, feature_types: Set[str] = None,
     count = 0
     skipped_chr = 0
     with opener as f:
-        for line in f:
-            feature = parse_gtf_line(line)
-            feature.file_order = count + 1  # Track original file order for stable sorting
-            if feature is None:
-                continue
-
-            # Filter by chromosome if specified
-            if chromosomes and feature.seqid not in chromosomes:
-                skipped_chr += 1
-                continue
-
-            # Filter by feature type if specified
-            if feature_types and feature.featuretype not in feature_types:
-                continue
+        for i, line in enumerate(f):
+            if line.startswith('#'): continue
+            parts = line.strip().split('\t')
+            attr_map = self._parse_attributes_fast(parts[8])
+            
+            if parts[2] == 'gene':
+                feature_id = attr_map.get('gene_id', [None])[0]
+            elif parts[2] == 'transcript':
+                feature_id = attr_map.get('transcript_id', [None])[0]
+            else:
+                # For Exons/CDS, try exon_id, else generate a fallback
+                feature_id = attr_map.get('exon_id', [None])[0]
+                if not feature_id:
+                    # Fallback: Create a unique ID similar to gffutils
+                    # using featuretype:chromosome:start-end:strand
+                    feature_id = f"{parts[2]}:{parts[0]}:{parts[3]}-{parts[4]}:{parts[6]}"
+            
+            feature = GTFFeature(
+                sys.intern(parts[0]), # seqid
+                sys.intern(parts[1]), # source
+                sys.intern(parts[2]), # featuretype
+                int(parts[3]),        # start
+                int(parts[4]),        # end
+                parts[5],             # score
+                sys.intern(parts[6]), # strand
+                parts[7],             # frame
+                attr_map,             # attributes dict
+                feature_id,           # THE CALCULATED ID
+                i                     # FILE ORDER
+            )
 
             db.add_feature(feature)
             count += 1
