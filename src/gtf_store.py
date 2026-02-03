@@ -447,18 +447,23 @@ def parse_gtf_line(line: str) -> Optional[GTFFeature]:
         return None
 
 
-def load_gtf(gtf_path: str, feature_types: Set[str] = None) -> InMemoryFeatureDB:
+def load_gtf(gtf_path: str, feature_types: Set[str] = None,
+             chromosomes: Set[str] = None) -> InMemoryFeatureDB:
     """
     Load a GTF file into an in-memory database.
 
     Args:
         gtf_path: Path to GTF file (can be gzipped)
         feature_types: Optional set of feature types to load (None = all)
+        chromosomes: Optional set of chromosome/seqid names to load (None = all)
 
     Returns:
         InMemoryFeatureDB instance
     """
-    logger.info(f"Loading GTF from {gtf_path} into memory...")
+    if chromosomes:
+        logger.info(f"Loading GTF from {gtf_path} into memory (chromosomes: {', '.join(sorted(chromosomes))})...")
+    else:
+        logger.info(f"Loading GTF from {gtf_path} into memory...")
 
     db = InMemoryFeatureDB()
 
@@ -469,10 +474,16 @@ def load_gtf(gtf_path: str, feature_types: Set[str] = None) -> InMemoryFeatureDB
         opener = open(gtf_path, 'r')
 
     count = 0
+    skipped_chr = 0
     with opener as f:
         for line in f:
             feature = parse_gtf_line(line)
             if feature is None:
+                continue
+
+            # Filter by chromosome if specified
+            if chromosomes and feature.seqid not in chromosomes:
+                skipped_chr += 1
                 continue
 
             # Filter by feature type if specified
@@ -489,6 +500,8 @@ def load_gtf(gtf_path: str, feature_types: Set[str] = None) -> InMemoryFeatureDB
     db._build_relationships()
 
     logger.info(f"Loaded {count} features into memory")
+    if skipped_chr > 0:
+        logger.info(f"  Skipped {skipped_chr} features from other chromosomes")
     logger.info(f"  Genes: {len(db._by_type.get('gene', []))}")
     logger.info(f"  Transcripts: {len(db._by_type.get('transcript', [])) + len(db._by_type.get('mRNA', []))}")
     logger.info(f"  Exons: {len(db._by_type.get('exon', []))}")

@@ -87,10 +87,15 @@ class DatasetProcessor:
 
         if args.genedb:
             if use_inmemory:
-                # In-memory mode: don't load full GTF in main process
-                # Workers will load their own copies as needed
-                logger.info("In-memory mode: GTF will be loaded by worker processes")
-                self.gffutils_db = None
+                # In-memory mode: pre-load GTF in parent process before forking
+                # Workers will inherit via copy-on-write (fork), avoiding redundant loads
+                # Filter by chromosome if --process_only_chr is specified to save memory
+                chr_filter = set(args.process_only_chr) if args.process_only_chr else None
+                if chr_filter:
+                    logger.info(f"Loading GTF into memory for chromosome(s): {', '.join(sorted(chr_filter))}")
+                else:
+                    logger.info("Loading GTF into memory (will be shared with worker processes via fork)")
+                self.gffutils_db = load_gene_db(self.args.genedb, use_inmemory=True, chromosomes=chr_filter)
             else:
                 # Traditional mode: load SQLite database in main process
                 logger.info("Loading gene database from " + self.args.genedb)

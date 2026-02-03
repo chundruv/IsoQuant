@@ -26,26 +26,33 @@ logger = logging.getLogger('IsoQuant')
 _gtf_cache = {}
 
 
-def load_gene_db(genedb_path: str, use_inmemory: bool = False):
+def load_gene_db(genedb_path: str, use_inmemory: bool = False, chromosomes: set = None):
     """
     Load gene database from path.
 
     Args:
         genedb_path: Path to .db file (gffutils) or .gtf file (in-memory)
         use_inmemory: If True, load GTF directly into memory (faster startup, no disk)
+        chromosomes: Optional set of chromosome names to load (only for in-memory mode)
 
     Returns:
         gffutils.FeatureDB or InMemoryFeatureDB
     """
     if use_inmemory:
+        # Create cache key that includes chromosomes filter
+        if chromosomes:
+            cache_key = (genedb_path, frozenset(chromosomes))
+        else:
+            cache_key = genedb_path
+
         # Check cache first - avoid loading GTF multiple times per process
-        if genedb_path in _gtf_cache:
+        if cache_key in _gtf_cache:
             logger.debug(f"Using cached GTF database for {genedb_path}")
-            return _gtf_cache[genedb_path]
+            return _gtf_cache[cache_key]
 
         # Load GTF directly into memory and cache it
-        db = load_gtf_inmemory(genedb_path)
-        _gtf_cache[genedb_path] = db
+        db = load_gtf_inmemory(genedb_path, chromosomes=chromosomes)
+        _gtf_cache[cache_key] = db
         return db
     else:
         # Use traditional gffutils SQLite database (no caching needed - SQLite handles it)

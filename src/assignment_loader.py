@@ -218,18 +218,18 @@ def prepare_read_filter(chr_id, saves_prefix, use_filtered_reads):
     return filtered_reads
 
 
-def load_genedb(genedb, use_inmemory=False):
+def load_genedb(genedb, use_inmemory=False, chromosomes=None):
     if genedb:
-        return load_gene_db(genedb, use_inmemory=use_inmemory)
+        return load_gene_db(genedb, use_inmemory=use_inmemory, chromosomes=chromosomes)
     return None
 
 
-def create_assignment_loader(chr_id, saves_prefix, genedb, reference_fasta, reference_fai, string_pools, use_filtered_reads=False, use_inmemory_genedb=False):
+def create_assignment_loader(chr_id, saves_prefix, genedb, reference_fasta, reference_fai, string_pools, use_filtered_reads=False, use_inmemory_genedb=False, chromosomes=None):
     fasta_reader = create_fasta_reader(reference_fasta, index_path=reference_fai)
     current_chr_record = fasta_reader[chr_id]
     multimapped_reads = prepare_multimapped_reads(saves_prefix, chr_id, string_pools)
     filtered_reads = prepare_read_filter(chr_id, saves_prefix, use_filtered_reads)
-    gffutils_db = load_genedb(genedb, use_inmemory=use_inmemory_genedb)
+    gffutils_db = load_genedb(genedb, use_inmemory=use_inmemory_genedb, chromosomes=chromosomes)
     chr_dump_file = saves_file_name(saves_prefix, chr_id)
 
     return ReadAssignmentLoader(chr_dump_file, gffutils_db, current_chr_record, multimapped_reads, string_pools, filtered_reads)
