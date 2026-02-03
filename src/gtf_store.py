@@ -324,7 +324,7 @@ class InMemoryFeatureDB:
                 continue
             yield feature
 
-    def children(self, feature, featuretype=None, order_by=None) -> Iterator[GTFFeature]:
+    def children(self, feature, featuretype=None) -> Iterator[GTFFeature]:
         """
         Get children of a feature (gffutils compatibility).
 
@@ -343,6 +343,11 @@ class InMemoryFeatureDB:
             feature_id = feature
         else:
             feature_id = feature.id
+        
+        if featuretype=='transcript' or featuretype=='mRNA' or featuretype=='gene':
+            order_by='id'
+        else:
+            order_by='start'
 
         # Normalize featuretype to tuple
         if featuretype:
@@ -366,12 +371,13 @@ class InMemoryFeatureDB:
 
         collect_descendants(feature_id)
 
-#        if order_by == 'start':
-#            # Sort by (start, end, id) for deterministic ordering that matches gffutils
-#            # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
-#            # Using id as tie-breaker ensures consistent ordering across implementations
-#            all_descendants = sorted(all_descendants, key=lambda f: (f.start, f.end, f.id))
-        all_descendants = sorted(all_descendants, key=lambda f: (f.id, f.start, f.end))
+        if order_by == 'start':
+            # Sort by (start, end, id) for deterministic ordering that matches gffutils
+            # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
+            # Using id as tie-breaker ensures consistent ordering across implementations
+            all_descendants = sorted(all_descendants, key=lambda f: (f.start, f.end, f.id))
+        elif order_by == 'id':
+            all_descendants = sorted(all_descendants, key=lambda f: f.id)
 
         return iter(all_descendants)
 
