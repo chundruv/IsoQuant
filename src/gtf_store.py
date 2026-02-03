@@ -125,7 +125,8 @@ class IntervalTree:
     def _ensure_sorted(self):
         """Sort intervals if needed."""
         if not self._sorted:
-            self._intervals.sort(key=lambda x: (x[0], x[1]))
+            # Sort by (start, end, feature_id) for deterministic ordering
+            self._intervals.sort(key=lambda x: (x[0], x[1], x[2].id))
             self._sorted = True
 
     def query(self, start: int, end: int) -> Iterator[GTFFeature]:
@@ -273,9 +274,11 @@ class InMemoryFeatureDB:
 
         if order_by:
             if isinstance(order_by, tuple) and 'start' in order_by:
-                features.sort(key=lambda f: (f.seqid, f.start))
+                # Sort by (seqid, start, end, id) for deterministic ordering
+                features.sort(key=lambda f: (f.seqid, f.start, f.end, f.id))
             elif order_by == 'start':
-                features.sort(key=lambda f: f.start)
+                # Sort by (start, end, id) for deterministic ordering
+                features.sort(key=lambda f: (f.start, f.end, f.id))
 
         return iter(features)
 
@@ -364,7 +367,10 @@ class InMemoryFeatureDB:
         collect_descendants(feature_id)
 
         if order_by == 'start':
-            all_descendants = sorted(all_descendants, key=lambda f: f.start)
+            # Sort by (start, end, id) for deterministic ordering that matches gffutils
+            # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
+            # Using id as tie-breaker ensures consistent ordering across implementations
+            all_descendants = sorted(all_descendants, key=lambda f: (f.start, f.end, f.id))
 
         return iter(all_descendants)
 
