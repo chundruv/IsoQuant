@@ -15,6 +15,7 @@ import logging
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Set
 
 logger = logging.getLogger('IsoQuant')
 
