@@ -553,10 +553,10 @@ class GeneInfo:
         all_isoforms_exons = {}
 
         for gene_db in self.gene_db_list:
-            for t in self.db.children(gene_db, featuretype=self.DEFAULT_RNA_TYPES, order_by='start'):
+            for t in self.db.children(gene_db, featuretype=self.DEFAULT_RNA_TYPES):
                 exons = []
                 all_features = []
-                for e in self.db.children(t, featuretype=('exon', 'CDS'), order_by='start'):
+                for e in self.db.children(t, featuretype=('exon', 'CDS')):
                     all_features.append((e.featuretype, e.start, e.end))
 
                 for i, e in enumerate(all_features):
