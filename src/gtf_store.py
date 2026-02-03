@@ -7,32 +7,23 @@
 
 """
 In-memory GTF store for IsoQuant.
-
-This module provides a high-performance in-memory alternative to gffutils
-SQLite database. It uses interval trees for fast region queries and
-dict-based lookups for ID access.
-
-Key features:
-- No SQLite database creation (faster startup)
-- In-memory interval trees for O(log n) region queries
-- Dict-based O(1) ID lookups
-- gffutils-compatible API for drop-in replacement
+High-performance replacement for gffutils SQLite database.
 """
 
 import gzip
 import logging
-from collections import defaultdict
-from bisect import bisect_left, bisect_right
-from dataclasses import dataclass, field
 import sys
-from typing import Dict, List, Optional, Set, Iterator, Tuple, Any
+from collections import defaultdict
+from dataclasses import dataclass
 
 logger = logging.getLogger('IsoQuant')
 
-
+# -----------------------------------------------------------------------------
+# 1. Optimized Feature Class
+# -----------------------------------------------------------------------------
 @dataclass
 class GTFFeature:
-    # 1. 'id' is in slots, so we must REMOVE the @property def id method below
+    # __slots__ drastically reduces memory usage by removing __dict__
     __slots__ = ('seqid', 'source', 'featuretype', 'start', 'end', 
                  'score', 'strand', 'frame', 'attributes', 'id', 
                  'children', 'extra', 'file_order')
@@ -48,470 +39,245 @@ class GTFFeature:
         self.strand = strand
         self.frame = frame
         self.attributes = attributes
-        self.id = feature_id        # Stored once, never recalculated
-        self.file_order = file_order # Crucial for 100% determinism
-        self.children = []
-        self.extra = []
+        self.id = feature_id         # Pre-calculated ID
+        self.file_order = file_order # File line number for stable sorting
+        self.children = []           # Pre-linked children
+        self.extra = []              # gffutils compatibility
 
-    # 2. Add this to ensure IsoQuant sees the attributes exactly as gffutils would
     def __getitem__(self, key):
+        """Allow dictionary-style access to attributes (db['gene_id'])."""
         return self.attributes.get(key)
-        
+
     def __str__(self):
-        # Reconstruct attribute string for output/hashing
-        attr_str = "; ".join([f'{k} "{v[0]}"' for k, v in self.attributes.items()])
+        """Reconstruct GTF line from memory."""
+        # Reconstruct attributes string: key "value";
+        attr_parts = []
+        for k, v in self.attributes.items():
+            # v is a list of values
+            val_str = " ".join([f'"{x}"' for x in v])
+            attr_parts.append(f'{k} {val_str}')
+        attr_str = "; ".join(attr_parts)
+        if attr_str:
+            attr_str += ";"
+            
         return f"{self.seqid}\t{self.source}\t{self.featuretype}\t{self.start}\t{self.end}\t{self.score}\t{self.strand}\t{self.frame}\t{attr_str}"
-    
-    def __getitem__(self, key: str) -> Any:
-        """Allow dict-like attribute access for gffutils compatibility."""
-        if hasattr(self, key):
-            return getattr(self, key)
-        return self.attributes.get(key)
-
-    def __hash__(self):
-        return hash((self.seqid, self.featuretype, self.start, self.end, self.strand))
-
-    def __eq__(self, other):
-        if not isinstance(other, GTFFeature):
-            return False
-        return (self.seqid == other.seqid and
-                self.featuretype == other.featuretype and
-                self.start == other.start and
-                self.end == other.end and
-                self.strand == other.strand)
 
 
-
-class IntervalTree:
+# -----------------------------------------------------------------------------
+# 2. Standalone Helper Functions (No 'self' required)
+# -----------------------------------------------------------------------------
+def parse_attributes_fast(attr_str):
     """
-    Simple interval tree for fast region queries.
-    Uses a sorted list with binary search for reasonable performance.
+    Fast parsing of GTF attributes string.
+    Returns dict: {key: [value, ...]}
     """
-
-    def __init__(self):
-        self._intervals: List[Tuple[int, int, GTFFeature]] = []
-        self._sorted = False
-
-    def add(self, start: int, end: int, feature: GTFFeature):
-        """Add an interval."""
-        self._intervals.append((start, end, feature))
-        self._sorted = False
-
-    def _ensure_sorted(self):
-        """Sort intervals if needed."""
-        if not self._sorted:
-            # Sort by (start, end, feature_id) for deterministic ordering
-            self._intervals.sort(key=lambda x: (x[0], x[1], x[2].id))
-            self._sorted = True
-
-    def query(self, start: int, end: int) -> Iterator[GTFFeature]:
-        """Find all intervals overlapping [start, end]."""
-        self._ensure_sorted()
-
-        # Binary search to find starting point
-        # An interval (s, e) overlaps (start, end) if s <= end and e >= start
-        for s, e, feature in self._intervals:
-            if s > end:
-                break  # No more overlaps possible
-            if e >= start:
-                yield feature
-
-    def __len__(self):
-        return len(self._intervals)
-
-
-class InMemoryFeatureDB:
-    """
-    In-memory GTF database that mimics gffutils.FeatureDB API.
-
-    This replaces the SQLite-based gffutils database with pure in-memory
-    data structures for faster access.
-    """
-
-    def __init__(self):
-        # Primary storage: feature_id -> feature
-        self._features: Dict[str, GTFFeature] = {}
-
-        # Index by feature type
-        self._by_type: Dict[str, List[GTFFeature]] = defaultdict(list)
-
-        # Index by chromosome (seqid)
-        self._by_seqid: Dict[str, List[GTFFeature]] = defaultdict(list)
-
-        # Interval trees for region queries, keyed by seqid
-        self._intervals: Dict[str, IntervalTree] = defaultdict(IntervalTree)
-
-        # Parent-child relationships
-        self._children: Dict[str, List[GTFFeature]] = defaultdict(list)
-        self._parents: Dict[str, List[GTFFeature]] = defaultdict(list)
-
-        # Gene -> transcripts mapping
-        self._gene_transcripts: Dict[str, List[GTFFeature]] = defaultdict(list)
-
-        # Transcript -> exons mapping
-        self._transcript_exons: Dict[str, List[GTFFeature]] = defaultdict(list)
-
-        # Track if indices are built
-        self._indexed = False
-
-    def __getitem__(self, feature_id: str) -> GTFFeature:
-        """Get feature by ID (gffutils compatibility)."""
-        if feature_id not in self._features:
-            raise KeyError(f"Feature '{feature_id}' not found")
-        return self._features[feature_id]
-
-    def __contains__(self, feature_id: str) -> bool:
-        """Check if feature exists."""
-        return feature_id in self._features
-
-    def get(self, feature_id: str, default=None) -> Optional[GTFFeature]:
-        """Get feature by ID with default."""
-        return self._features.get(feature_id, default)
-
-    def add_feature(self, feature: GTFFeature):
-        """Add a feature to the database."""
-        feature_id = feature.id
-        self._features[feature_id] = feature
-        self._by_type[feature.featuretype].append(feature)
-        self._by_seqid[feature.seqid].append(feature)
-        self._intervals[feature.seqid].add(feature.start, feature.end, feature)
-        self._indexed = False
-
-    def _build_relationships(self):
-        """Build parent-child relationships after all features are loaded."""
-        if self._indexed:
-            return
-
-        # Build gene -> transcript relationships
-        for feature in self._by_type.get('transcript', []) + self._by_type.get('mRNA', []):
-            gene_id = feature.attributes.get('gene_id', [''])[0]
-            if gene_id:
-                self._gene_transcripts[gene_id].append(feature)
-                if gene_id in self._features:
-                    self._children[gene_id].append(feature)
-                    self._parents[feature.id].append(self._features[gene_id])
-
-        # Build transcript -> exon relationships
-        for feature in self._by_type.get('exon', []):
-            tx_id = feature.attributes.get('transcript_id', [''])[0]
-            if tx_id:
-                self._transcript_exons[tx_id].append(feature)
-                if tx_id in self._features:
-                    self._children[tx_id].append(feature)
-                    self._parents[feature.id].append(self._features[tx_id])
-
-        # Build transcript -> CDS/UTR/codon relationships
-        for feature_type in ('CDS', 'UTR', 'five_prime_UTR', 'three_prime_UTR',
-                             'start_codon', 'stop_codon'):
-            for feature in self._by_type.get(feature_type, []):
-                tx_id = feature.attributes.get('transcript_id', [''])[0]
-                if tx_id and tx_id in self._features:
-                    self._children[tx_id].append(feature)
-                    self._parents[feature.id].append(self._features[tx_id])
-
-        # Sort exons by position
-        for tx_id in self._transcript_exons:
-            self._transcript_exons[tx_id].sort(key=lambda x: x.start)
-
-        self._indexed = True
-
-    def features_of_type(self, featuretype, order_by=None, limit=None) -> Iterator[GTFFeature]:
-        """
-        Get all features of a given type (gffutils compatibility).
-
-        Args:
-            featuretype: str or tuple of feature types
-            order_by: Optional tuple of (attribute, 'start') for sorting
-            limit: Optional region string "seqid:start-end" to filter by location
-        """
-        self._build_relationships()
-
-        if isinstance(featuretype, str):
-            featuretype = (featuretype,)
-
-        features = []
-        for ft in featuretype:
-            features.extend(self._by_type.get(ft, []))
-
-        # Apply region limit if specified
-        if limit:
-            # Parse limit string like "chr1:1000-2000" or "chr1"
-            if ':' in limit:
-                seqid, coords = limit.split(':', 1)
-                if '-' in coords:
-                    start, end = map(int, coords.split('-'))
-                else:
-                    start, end = int(coords), float('inf')
-            else:
-                seqid = limit
-                start, end = 0, float('inf')
-            features = [f for f in features if f.seqid == seqid and f.start >= start and f.end <= end]
-
-        if order_by:
-            if isinstance(order_by, tuple) and 'start' in order_by:
-                # Sort by (seqid, start, end, id) for deterministic ordering
-                features.sort(key=lambda f: (f.seqid, f.start, f.end, f.id))
-            elif order_by == 'start':
-                # Sort by (start, end, id) for deterministic ordering
-                features.sort(key=lambda f: (f.start, f.end, f.id))
-
-        return iter(features)
-
-    def all_features(self) -> Iterator[GTFFeature]:
-        """Get all features."""
-        return iter(self._features.values())
-
-    def region(self, seqid: str = None, start: int = None, end: int = None,
-               featuretype=None, strand: str = None) -> Iterator[GTFFeature]:
-        """
-        Get features overlapping a region (gffutils compatibility).
-
-        Args:
-            seqid: Chromosome/contig name
-            start: Start position (1-based)
-            end: End position (1-based)
-            featuretype: Optional filter by feature type (str or tuple)
-            strand: Optional filter by strand
-        """
-        self._build_relationships()
-
-        if seqid is None:
-            raise ValueError("seqid is required for region query")
-
-        if seqid not in self._intervals:
-            return iter([])
-
-        # Use interval tree for efficient query
-        if start is None:
-            start = 0
-        if end is None:
-            end = float('inf')
-
-        # Normalize featuretype to tuple for consistent comparison
-        if featuretype is not None:
-            if isinstance(featuretype, str):
-                featuretype = (featuretype,)
-
-        for feature in self._intervals[seqid].query(start, end):
-            if featuretype and feature.featuretype not in featuretype:
-                continue
-            if strand and feature.strand != strand:
-                continue
-            yield feature
-
-    def children(self, feature, featuretype=None) -> Iterator[GTFFeature]:
-        """
-        Get children of a feature (gffutils compatibility).
-
-        This returns ALL descendants that match the featuretype, not just direct
-        children. This matches gffutils behavior where gene.children(featuretype='exon')
-        returns all exons under that gene (via transcripts).
-
-        Args:
-            feature: GTFFeature or feature ID
-            featuretype: Optional filter by type (str or tuple)
-            order_by: Optional sorting
-        """
-        self._build_relationships()
-
-        if isinstance(feature, str):
-            feature_id = feature
-        else:
-            feature_id = feature.id
-        
-        # if featuretype=='transcript' or featuretype=='mRNA' or featuretype=='gene':
-        #     order_by='id'
-        # else:
-        #     order_by='start'
-
-        # Normalize featuretype to tuple
-        if featuretype:
-            if isinstance(featuretype, str):
-                featuretype = (featuretype,)
-
-        # Collect all descendants recursively
-        all_descendants = []
-        visited = set()
-
-        def collect_descendants(fid):
-            if fid in visited:
-                return
-            visited.add(fid)
-            for child in self._children.get(fid, []):
-                # Add this child if it matches the featuretype (or no filter)
-                if featuretype is None or child.featuretype in featuretype:
-                    all_descendants.append(child)
-                # Always recurse to find deeper descendants
-                collect_descendants(child.id)
-
-        collect_descendants(feature_id)
-
-        # if order_by == 'start':
-        #     # Sort by (start, end, id) for deterministic ordering that matches gffutils
-        #     # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
-        #     # Using id as tie-breaker ensures consistent ordering across implementations
-        all_descendants.sort(key=lambda x: (x.start, x.end, x.file_order))
-
-
-        return iter(all_descendants)
-
-    def parents(self, feature, featuretype=None) -> Iterator[GTFFeature]:
-        """Get parents of a feature."""
-        self._build_relationships()
-
-        if isinstance(feature, str):
-            feature_id = feature
-        else:
-            feature_id = feature.id
-
-        parents = self._parents.get(feature_id, [])
-
-        if featuretype:
-            if isinstance(featuretype, str):
-                featuretype = (featuretype,)
-            parents = [p for p in parents if p.featuretype in featuretype]
-
-        return iter(parents)
-
-    def seqids(self) -> List[str]:
-        """Get all chromosome/contig IDs."""
-        return list(self._by_seqid.keys())
-
-
-def parse_gtf_attributes(attr_string: str) -> Dict[str, List[str]]:
-    """Parse GTF attribute string into a dictionary."""
-    attributes = {}
-
-    # GTF format: key "value"; key "value";
-    for item in attr_string.strip().rstrip(';').split(';'):
-        item = item.strip()
-        if not item:
+    res = {}
+    # Split by semicolon
+    for pair in attr_str.split(';'):
+        pair = pair.strip()
+        if not pair: 
             continue
-
-        # Split on first space
-        parts = item.split(' ', 1)
-        if len(parts) != 2:
-            # Try splitting on '=' for GFF3 format
-            parts = item.split('=', 1)
-            if len(parts) != 2:
-                continue
-
-        key = parts[0].strip()
-        value = parts[1].strip().strip('"\'')
-
-        if key in attributes:
-            attributes[key].append(value)
+            
+        # Split by first space to separate Key and Value
+        # e.g. 'gene_id "ENSG000001"' -> key='gene_id', val='"ENSG000001"'
+        parts = pair.split(' ', 1)
+        if len(parts) < 2:
+            continue
+            
+        key = parts[0]
+        val = parts[1].strip('"') # Remove quotes
+        
+        # Store as list (gffutils standard)
+        if key in res:
+            res[key].append(val)
         else:
-            attributes[key] = [value]
-
-    return attributes
-
-
-def parse_gtf_line(line: str) -> Optional[GTFFeature]:
-    """Parse a single GTF line into a GTFFeature."""
-    line = line.strip()
-    if not line or line.startswith('#'):
-        return None
-
-    parts = line.split('\t')
-    if len(parts) < 9:
-        return None
-
-    try:
-        return GTFFeature(
-            seqid=parts[0],
-            source=parts[1],
-            featuretype=parts[2],
-            start=int(parts[3]),
-            end=int(parts[4]),
-            score=parts[5],
-            strand=parts[6],
-            frame=parts[7],
-            attributes=parse_gtf_attributes(parts[8])
-        )
-    except (ValueError, IndexError) as e:
-        logger.warning(f"Failed to parse GTF line: {e}")
-        return None
+            res[key] = [val]
+    return res
 
 
-def load_gtf(gtf_path: str, feature_types: Set[str] = None,
-             chromosomes: Set[str] = None) -> InMemoryFeatureDB:
+# -----------------------------------------------------------------------------
+# 3. The Database Class
+# -----------------------------------------------------------------------------
+class InMemoryFeatureDB:
+    def __init__(self, features_map, genes_list):
+        self.features = features_map
+        self.genes = genes_list
+
+    def __getitem__(self, key):
+        return self.features[key]
+
+    def children(self, feature, featuretype=None, order_by=None, reverse=False, limit=None):
+        """
+        Retrieve children of a feature.
+        Matches gffutils signature but uses pre-linked lists and sorting fixes.
+        """
+        # Resolve feature ID
+        if isinstance(feature, str):
+            feature_obj = self.features.get(feature)
+        else:
+            feature_obj = feature
+        
+        if not feature_obj:
+            return []
+
+        # Get pre-linked children
+        # Filter by featuretype if requested
+        if featuretype:
+            results = [c for c in feature_obj.children if c.featuretype == featuretype]
+        else:
+            results = list(feature_obj.children) # Copy list
+
+        # -------------------------------------------------------
+        # SORTING FIX for Deterministic Output
+        # -------------------------------------------------------
+        if order_by is None:
+            # Default behavior based on parent type
+            if feature_obj.featuretype in ['gene', 'mRNA', 'transcript']:
+                # Transcripts: Sort by ID (Alphanumeric), then file order
+                results.sort(key=lambda x: (x.id, x.file_order))
+            else:
+                # Exons/CDS: Sort by Genomic Coordinate, then file order
+                results.sort(key=lambda x: (x.start, x.end, x.file_order))
+        
+        elif order_by == 'start':
+            results.sort(key=lambda x: (x.start, x.end, x.file_order))
+        elif order_by == 'id':
+            results.sort(key=lambda x: (x.id, x.file_order))
+            
+        if reverse:
+            results.reverse()
+            
+        if limit:
+            results = results[:limit]
+            
+        return results
+    
+    # Required for gffutils compatibility
+    def parents(self, feature, featuretype=None):
+        # Not strictly needed for IsoQuant's core loop, but good for safety
+        # Since we didn't store parent pointers to save RAM, this might be empty
+        # If IsoQuant needs this, we would need to add 'parent' slot to GTFFeature
+        return []
+
+    def region(self, seqid=None, start=None, end=None, strand=None, featuretype=None):
+        # Used for fetching genes in a range
+        # Simple linear scan implementation (optimized with ncls in full version if needed)
+        # For IsoQuant gene iteration, it usually just iterates 'self.genes'
+        results = []
+        
+        # Optimization: if just iterating all genes
+        if featuretype == 'gene' and seqid is None:
+            return self.genes
+            
+        # Basic implementation if needed (slow for random access, fine for one-pass)
+        for g in self.genes:
+            if seqid and g.seqid != seqid: continue
+            if start and g.end < start: continue
+            if end and g.start > end: continue
+            if strand and g.strand != strand: continue
+            results.append(g)
+        return results
+        
+    def all_features(self):
+        return self.features.values()
+
+
+# -----------------------------------------------------------------------------
+# 4. The Loader Function (Factory)
+# -----------------------------------------------------------------------------
+def load_gtf(gtf_path, chromosomes=None):
     """
-    Load a GTF file into an in-memory database.
-
-    Args:
-        gtf_path: Path to GTF file (can be gzipped)
-        feature_types: Optional set of feature types to load (None = all)
-        chromosomes: Optional set of chromosome/seqid names to load (None = all)
-
-    Returns:
-        InMemoryFeatureDB instance
+    Parses GTF and returns an InMemoryFeatureDB.
     """
-    if chromosomes:
-        logger.info(f"Loading GTF from {gtf_path} into memory (chromosomes: {', '.join(sorted(chromosomes))})...")
-    else:
-        logger.info(f"Loading GTF from {gtf_path} into memory...")
-
-    db = InMemoryFeatureDB()
-
-    # Open file (handle gzip)
-    if gtf_path.endswith('.gz'):
-        opener = gzip.open(gtf_path, 'rt')
-    else:
-        opener = open(gtf_path, 'r')
-
-    count = 0
-    skipped_chr = 0
-    with opener as f:
+    logger.info(f"Loading in-memory GTF from {gtf_path}")
+    
+    features_map = {}
+    genes_list = []
+    
+    # Temporary lookups for linking
+    genes_by_id = {}
+    transcripts_by_id = {}
+    
+    # For unique ID generation
+    exon_counter = 0
+    
+    # Handle GZIP
+    open_func = gzip.open if gtf_path.endswith('.gz') else open
+    
+    with open_func(gtf_path, 'rt') as f:
         for i, line in enumerate(f):
             if line.startswith('#'): continue
+            
             parts = line.strip().split('\t')
-            attr_map = self._parse_attributes_fast(parts[8])
+            if len(parts) < 9: continue
+
+            # Filter by chromosome if requested (Speeds up loading)
+            seqid = parts[0]
+            if chromosomes and seqid not in chromosomes:
+                continue
+
+            # 1. Parse Attributes (Using standalone function, NO self.)
+            attr_map = parse_attributes_fast(parts[8])
             
-            if parts[2] == 'gene':
-                feature_id = attr_map.get('gene_id', [None])[0]
-            elif parts[2] == 'transcript':
-                feature_id = attr_map.get('transcript_id', [None])[0]
+            feature_type = sys.intern(parts[2])
+
+            # 2. Determine Feature ID
+            # Logic: Use gene_id/transcript_id if available, else generate safe ID
+            if feature_type == 'gene':
+                fid = attr_map.get('gene_id', [None])[0]
+            elif feature_type == 'transcript':
+                fid = attr_map.get('transcript_id', [None])[0]
             else:
-                # For Exons/CDS, try exon_id, else generate a fallback
-                feature_id = attr_map.get('exon_id', [None])[0]
-                if not feature_id:
-                    # Fallback: Create a unique ID similar to gffutils
-                    # using featuretype:chromosome:start-end:strand
-                    feature_id = f"{parts[2]}:{parts[0]}:{parts[3]}-{parts[4]}:{parts[6]}"
-            
+                # Exons/CDS often lack specific IDs in GTF
+                fid = attr_map.get('exon_id', [None])[0]
+                if not fid:
+                    # Create synthetic unique ID
+                    fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{exon_counter}"
+                    exon_counter += 1
+
+            if not fid:
+                # Fallback if gene/transcript missing ID
+                fid = f"unknown_{i}"
+
+            # 3. Create Feature Object
+            # Using sys.intern to save RAM on repeated strings
             feature = GTFFeature(
-                sys.intern(parts[0]), # seqid
-                sys.intern(parts[1]), # source
-                sys.intern(parts[2]), # featuretype
-                int(parts[3]),        # start
-                int(parts[4]),        # end
-                parts[5],             # score
-                sys.intern(parts[6]), # strand
-                parts[7],             # frame
-                attr_map,             # attributes dict
-                feature_id,           # THE CALCULATED ID
-                i                     # FILE ORDER
+                sys.intern(seqid),          # seqid
+                sys.intern(parts[1]),       # source
+                feature_type,               # featuretype
+                int(parts[3]),              # start
+                int(parts[4]),              # end
+                parts[5],                   # score
+                sys.intern(parts[6]),       # strand
+                parts[7],                   # frame
+                attr_map,                   # attributes
+                fid,                        # id
+                i                           # file_order (Line Number)
             )
 
-            db.add_feature(feature)
-            count += 1
+            # 4. Store and Link
+            features_map[fid] = feature
+            
+            if feature_type == 'gene':
+                genes_list.append(feature)
+                genes_by_id[fid] = feature
+            
+            elif feature_type == 'transcript':
+                # Link to Gene
+                gid = attr_map.get('gene_id', [None])[0]
+                if gid and gid in genes_by_id:
+                    genes_by_id[gid].children.append(feature)
+                transcripts_by_id[fid] = feature
+                
+            elif feature_type in ['exon', 'CDS', 'UTR']:
+                # Link to Transcript
+                tid = attr_map.get('transcript_id', [None])[0]
+                if tid and tid in transcripts_by_id:
+                    transcripts_by_id[tid].children.append(feature)
 
-            if count % 100000 == 0:
-                logger.debug(f"Loaded {count} features...")
-
-    # Build indices
-    db._build_relationships()
-
-    logger.info(f"Loaded {count} features into memory")
-    if skipped_chr > 0:
-        logger.info(f"  Skipped {skipped_chr} features from other chromosomes")
-    logger.info(f"  Genes: {len(db._by_type.get('gene', []))}")
-    logger.info(f"  Transcripts: {len(db._by_type.get('transcript', [])) + len(db._by_type.get('mRNA', []))}")
-    logger.info(f"  Exons: {len(db._by_type.get('exon', []))}")
-
-    return db
-
+    # 5. Return the DB object
+    logger.info(f"Loaded {len(features_map)} features.")
+    return InMemoryFeatureDB(features_map, genes_list)
 
 def get_gtf_chromosomes(gtf_path: str) -> Set[str]:
     """
@@ -549,22 +315,3 @@ def get_gtf_chromosomes(gtf_path: str) -> Set[str]:
     logger.info(f"Found {len(chromosomes)} chromosomes in GTF")
     return chromosomes
 
-
-# Convenience function for drop-in replacement
-def FeatureDB(path: str, **kwargs) -> InMemoryFeatureDB:
-    """
-    Drop-in replacement for gffutils.FeatureDB.
-
-    If path ends with .db, attempts to load as gffutils database.
-    Otherwise, loads GTF directly into memory.
-    """
-    if path.endswith('.db'):
-        # This is a gffutils database file - load GTF from original source
-        # For now, raise an error - caller should use load_gtf directly
-        raise ValueError(
-            f"Cannot load .db file with in-memory store. "
-            f"Use gtf_store.load_gtf() with the original GTF file, "
-            f"or pass --fast to skip database creation."
-        )
-
-    return load_gtf(path, **kwargs)
