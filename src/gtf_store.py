@@ -85,6 +85,33 @@ def parse_attributes_fast(attr_str):
             res[key] = [val]
     return res
 
+def get_gtf_chromosomes(gtf_path):
+    """
+    Scans GTF file to find all used chromosome names (seqids).
+    Returns a set of strings.
+    """
+    logger.info(f"Scanning GTF for chromosome names: {gtf_path}")
+    chromosomes = set()
+    
+    open_func = gzip.open if gtf_path.endswith('.gz') else open
+    
+    try:
+        with open_func(gtf_path, 'rt') as f:
+            for line in f:
+                if line.startswith('#'): continue
+                
+                # We only need the first column (seqid)
+                # Optimization: find the first tab instead of splitting the whole line
+                tab_index = line.find('\t')
+                if tab_index != -1:
+                    chromosomes.add(line[:tab_index])
+    except Exception as e:
+        logger.error(f"Failed to scan chromosomes from {gtf_path}: {e}")
+        raise
+
+    logger.info(f"Found {len(chromosomes)} chromosomes in GTF.")
+    return chromosomes
+
 
 # -----------------------------------------------------------------------------
 # 3. The Database Class
@@ -269,6 +296,3 @@ def load_gtf(gtf_path, chromosomes=None):
 
     logger.info(f"Loaded {len(features_map)} features.")
     return InMemoryFeatureDB(features_map, features_by_type)
-
-# For compatibility
-get_gtf_chromosomes = None
