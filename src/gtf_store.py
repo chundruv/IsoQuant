@@ -365,12 +365,7 @@ class InMemoryFeatureDB:
                 collect_descendants(child.id)
 
         collect_descendants(feature_id)
-
-        if order_by == 'start':
-            # Sort by (start, end, id) for deterministic ordering that matches gffutils
-            # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
-            # Using id as tie-breaker ensures consistent ordering across implementations
-            all_descendants = sorted(all_descendants, key=lambda f: (f.start, f.end, f.id))
+        all_descendants = sorted(all_descendants, key=lambda f: (f.id))
 
         return iter(all_descendants)
 
