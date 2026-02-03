@@ -19,7 +19,7 @@ def get_region_from_db(db, region):
 	all_isoforms_exons = {}
 	
 	for gene_db in gene_list:
-		for t in db.children(gene_db, featuretype=('transcript', 'mRNA'), order_by='start'):
+		for t in db.children(gene_db, featuretype=('transcript', 'mRNA')):
 			all_isoforms_exons[t.id] = []
 			for e in db.children(t):
 				if e.featuretype == 'exon':
