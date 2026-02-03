@@ -113,9 +113,9 @@ def db2bed(db, bed, _=None):
             transcript_name = record.id + "|" + transcript_type + "|" + gene_name
             exons = []
             cds = []
-            for e in genedb.children(record, order_by='start', featuretype='exon'):
+            for e in genedb.children(record, featuretype='exon'):
                 exons.append((e.start - 1, e.end))
-            for e in genedb.children(record, order_by='start', featuretype='CDS'):
+            for e in genedb.children(record, featuretype='CDS'):
                 cds.append((e.start - 1, e.end))
 
             if not exons:

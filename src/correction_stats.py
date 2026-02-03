@@ -42,7 +42,7 @@ class CorrectionStats:
     
     def get_introns_from_transcript(self, transcript):
         exons = []
-        for e in self.reference.children(transcript, order_by='start'):
+        for e in self.reference.children(transcript):
             if e.featuretype == 'exon':
                     exons.append((e.start, e.end))
         introns= junctions_from_blocks(exons)
