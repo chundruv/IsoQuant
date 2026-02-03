@@ -549,7 +549,7 @@ class IOSupport:
 
         dists_to_gene_tss = []
         dists_to_gene_tts = []
-        for t in gene_info.db.children(gene_info.db[gene_id], featuretype=('transcript', 'mRNA'), order_by='start'):
+        for t in gene_info.db.children(gene_info.db[gene_id], featuretype=('transcript', 'mRNA')):
             dists_to_gene_tss.append(self.count_tss_dist(read_assignment, t.id))
             dists_to_gene_tts.append(self.count_tts_dist(read_assignment, t.id))
         dist_to_gene_tss = dists_to_gene_tss[argmin([abs(x) for x in dists_to_gene_tss])]
@@ -557,7 +557,7 @@ class IOSupport:
         return dist_to_gene_tss, dist_to_gene_tts
 
     def find_ref_CDS_region(self, gene_info, transcript_id):
-        cds = [c for c in gene_info.db.children(gene_info.db[transcript_id], featuretype='CDS', order_by='start')]
+        cds = [c for c in gene_info.db.children(gene_info.db[transcript_id], featuretype='CDS')]
         if len(cds) == 0:
             return -1, -1
         if gene_info.isoform_strands[transcript_id] == "-":
