@@ -31,17 +31,32 @@ logger = logging.getLogger('IsoQuant')
 
 @dataclass
 class GTFFeature:
-    """Represents a single GTF feature (gene, transcript, exon, etc.)."""
-    seqid: str
-    source: str
-    featuretype: str
-    start: int  # 1-based, inclusive
-    end: int    # 1-based, inclusive
-    score: str
-    strand: str
-    frame: str
-    attributes: Dict[str, List[str]] = field(default_factory=dict)
+    __slots__ = ('seqid', 'source', 'featuretype', 'start', 'end', 
+                 'score', 'strand', 'frame', 'attributes', 'id', 
+                 'children', 'extra', 'file_order') # Added file_order
 
+    def __init__(self, seqid, source, featuretype, start, end, 
+                 score, strand, frame, attributes, feature_id, file_order):
+        self.seqid = seqid
+        self.source = source
+        self.featuretype = featuretype
+        self.start = start
+        self.end = end
+        self.score = score
+        self.strand = strand
+        self.frame = frame
+        self.attributes = attributes # Keep this as the DICT for lookups
+        self.id = feature_id
+        self.file_order = file_order # For stable sorting
+        self.children = []
+        self.extra = [] # gffutils often has this
+        
+    def __str__(self):
+        # Reconstruct exactly like gffutils or use raw if stored
+        # gffutils usually does: key "value"; key "value";
+        attr_str = "; ".join([f'{k} "{v[0]}"' for k, v in self.attributes.items()])
+        return f"{self.seqid}\t{self.source}\t{self.featuretype}\t{self.start}\t{self.end}\t{self.score}\t{self.strand}\t{self.frame}\t{attr_str}"
+    
     @property
     def id(self) -> str:
         """Get the primary ID for this feature."""
@@ -83,28 +98,6 @@ class GTFFeature:
                 self.end == other.end and
                 self.strand == other.strand)
 
-    def __str__(self) -> str:
-        """Return GTF format string for this feature."""
-        # Format attributes as GTF attribute string
-        attr_parts = []
-        for key, values in self.attributes.items():
-            for value in values:
-                attr_parts.append(f'{key} "{value}"')
-        attr_str = '; '.join(attr_parts)
-        if attr_str:
-            attr_str += ';'
-
-        return '\t'.join([
-            self.seqid,
-            self.source,
-            self.featuretype,
-            str(self.start),
-            str(self.end),
-            self.score,
-            self.strand,
-            self.frame,
-            attr_str
-        ])
 
 
 class IntervalTree:
@@ -344,10 +337,10 @@ class InMemoryFeatureDB:
         else:
             feature_id = feature.id
         
-        if featuretype=='transcript' or featuretype=='mRNA' or featuretype=='gene':
-            order_by='id'
-        else:
-            order_by='start'
+        # if featuretype=='transcript' or featuretype=='mRNA' or featuretype=='gene':
+        #     order_by='id'
+        # else:
+        #     order_by='start'
 
         # Normalize featuretype to tuple
         if featuretype:
@@ -371,13 +364,12 @@ class InMemoryFeatureDB:
 
         collect_descendants(feature_id)
 
-        if order_by == 'start':
-            # Sort by (start, end, id) for deterministic ordering that matches gffutils
-            # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
-            # Using id as tie-breaker ensures consistent ordering across implementations
-            all_descendants.sort(key=lambda f: (f.start, f.end, f.id))
-        elif order_by == 'id':
-            all_descendants.sort(key=lambda f: f.id)
+        # if order_by == 'start':
+        #     # Sort by (start, end, id) for deterministic ordering that matches gffutils
+        #     # gffutils uses database rowid for tie-breaking, which corresponds to GTF file order
+        #     # Using id as tie-breaker ensures consistent ordering across implementations
+        all_descendants.sort(key=lambda x: (x.start, x.end, x.file_order))
+
 
         return iter(all_descendants)
 
@@ -491,6 +483,7 @@ def load_gtf(gtf_path: str, feature_types: Set[str] = None,
     with opener as f:
         for line in f:
             feature = parse_gtf_line(line)
+            feature.file_order = count + 1  # Track original file order for stable sorting
             if feature is None:
                 continue
 
