@@ -576,7 +576,8 @@ def setup_string_pools(args, sample, chr_ids, chr_id=None, gffutils_db=None,
     # Build gene/transcript pools from annotation (if available)
     if gffutils_db is None and args.genedb:
         use_inmemory = getattr(args, 'use_inmemory_genedb', False)
-        gffutils_db = load_genedb(args.genedb, use_inmemory=use_inmemory)
+        chr_filter = set(args.process_only_chr) if args.process_only_chr else None
+        gffutils_db = load_genedb(args.genedb, use_inmemory=use_inmemory, chromosomes=chr_filter)
     if gffutils_db:
         string_pools.build_from_gffutils(gffutils_db)
 

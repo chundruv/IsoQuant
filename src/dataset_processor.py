@@ -355,7 +355,8 @@ class DatasetProcessor:
             results = map(*read_gen)
 
         use_inmemory = getattr(self.args, 'use_inmemory_genedb', False)
-        sample_procesed_read_manager = processed_read_manager_type(sample, self.args.multimap_strategy, chr_ids, self.args.genedb, use_inmemory)
+        chr_filter = set(self.args.process_only_chr) if self.args.process_only_chr else None
+        sample_procesed_read_manager = processed_read_manager_type(sample, self.args.multimap_strategy, chr_ids, self.args.genedb, use_inmemory, chr_filter)
         logger.info("Counting multimapped reads")
         for chr_id, read_groups, alignment_stats, processed_reads in results:
             logger.info("Counting reads from %s" % chr_id)

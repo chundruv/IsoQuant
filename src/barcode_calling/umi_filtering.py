@@ -607,7 +607,9 @@ def create_transcript_info_dict(genedb: str, chr_ids: Optional[List[str]] = None
     Returns:
         Dict mapping transcript_id to (transcript_type, polya_site) tuple
     """
-    gffutils_db = load_gene_db(genedb, use_inmemory=use_inmemory)
+    # Pass chr_ids as chromosomes filter for efficient loading in fast mode
+    chr_filter = set(chr_ids) if chr_ids else None
+    gffutils_db = load_gene_db(genedb, use_inmemory=use_inmemory, chromosomes=chr_filter)
     transcript_type_dict = {}
 
     for t in gffutils_db.features_of_type(('transcript', 'mRNA')):
