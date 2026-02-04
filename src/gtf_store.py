@@ -212,13 +212,15 @@ class InMemoryFeatureDB:
 # -----------------------------------------------------------------------------
 def load_gtf(gtf_path, chromosomes=None):
     logger.info(f"Loading in-memory GTF from {gtf_path}")
-    
+
     features_map = {}
     features_by_type = defaultdict(list)
     pending_children = defaultdict(list)
-    
+    gene_id_counts = defaultdict(int)
+    transcript_id_counts = defaultdict(int)
+
     open_func = gzip.open if gtf_path.endswith('.gz') else open
-    
+
     with open_func(gtf_path, 'rt') as f:
         for i, line in enumerate(f):
             if line.startswith('#'): continue
@@ -232,67 +234,68 @@ def load_gtf(gtf_path, chromosomes=None):
             attr_map = parse_attributes_fast(parts[8])
             feature_type = sys.intern(parts[2])
 
-            fid = None
-            parent_id = None
-            
+            original_fid = None
             if feature_type == 'gene':
-                fid = attr_map.get('gene_id', [None])[0]
+                original_fid = attr_map.get('gene_id', [None])[0]
             elif feature_type == 'transcript':
-                fid = attr_map.get('transcript_id', [None])[0]
+                original_fid = attr_map.get('transcript_id', [None])[0]
             elif feature_type == 'exon':
-                fid = attr_map.get('exon_id', [None])[0]
+                original_fid = attr_map.get('exon_id', [None])[0]
 
-            if not fid:
-                # For exons without exon_id and other features like CDS, UTR, etc.,
-                # create a stable ID based on their properties.
-                fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
+            if not original_fid:
+                original_fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
+            
+            if not original_fid: original_fid = f"unknown_{i}"
 
-            if not fid: fid = f"unknown_{i}"
+            fid = original_fid
+            if feature_type in ['gene', 'transcript', 'mRNA'] and fid in features_map:
+                if feature_type == 'gene':
+                    gene_id_counts[fid] += 1
+                    fid = f"{fid}.{gene_id_counts[fid]}"
+                elif feature_type in ['transcript', 'mRNA']:
+                    transcript_id_counts[fid] += 1
+                    fid = f"{fid}.{transcript_id_counts[fid]}"
+                
+                # Update attribute map with new unique ID
+                if feature_type == 'gene' and 'gene_id' in attr_map:
+                    attr_map['gene_id'][0] = fid
+                elif feature_type in ['transcript', 'mRNA'] and 'transcript_id' in attr_map:
+                    attr_map['transcript_id'][0] = fid
 
+            # Determine parent using original (pre-deduplication) IDs
+            parent_id = None
             tid = attr_map.get('transcript_id', [None])[0]
             gid = attr_map.get('gene_id', [None])[0]
+            
+            if feature_type not in ['gene', 'transcript', 'mRNA']:
+                if tid and transcript_id_counts[tid] > 0:
+                    tid = f"{tid}.{transcript_id_counts[tid]}"
+                if gid and gene_id_counts[gid] > 0:
+                    gid = f"{gid}.{gene_id_counts[gid]}"
 
+            # Set parent ID based on hierarchy
             if tid and tid != fid:
                 parent_id = tid
             elif gid and gid != fid:
                 parent_id = gid
 
-            # -----------------------------------------------------------
-            # FIX: Upsert Logic (Merge duplicates instead of creating new)
-            # -----------------------------------------------------------
-            if fid in features_map:
-                # Feature exists: Merge data
-                existing = features_map[fid]
-                
-                # Update boundaries (Envelope)
-                existing.start = min(existing.start, int(parts[3]))
-                existing.end = max(existing.end, int(parts[4]))
-                
-                # Merge attributes
-                for k, v in attr_map.items():
-                    if k in existing.attributes:
-                        # Append unique new values
-                        existing_values = set(existing.attributes[k])
-                        for val in v:
-                            if val not in existing_values:
-                                existing.attributes[k].append(val)
-                    else:
-                        existing.attributes[k] = v
-                
-                feature = existing
-                # Note: We do NOT append to features_by_type again, preventing double counting
-            else:
-                # New Feature
-                feature = GTFFeature(
-                    seqid, sys.intern(parts[1]), feature_type,
-                    int(parts[3]), int(parts[4]), parts[5],
-                    sys.intern(parts[6]), parts[7], attr_map,
-                    fid, i
-                )
-                features_map[fid] = feature
-                features_by_type[feature_type].append(feature)
+            # Create new feature - no merging
+            feature = GTFFeature(
+                seqid, sys.intern(parts[1]), feature_type,
+                int(parts[3]), int(parts[4]), parts[5],
+                sys.intern(parts[6]), parts[7], attr_map,
+                fid, i
+            )
             
-            # Always track hierarchy (even for merged features)
+            if fid in features_map:
+                # This should now only happen for non-gene/transcript features if IDs are reused.
+                # The logic here is now safer due to unique IDs for major types.
+                # To be fully safe, we could also rename these, but it's less common.
+                logger.warning(f"Duplicate feature ID '{fid}' for type '{feature_type}' on line {i+1}. Overwriting.")
+
+            features_map[fid] = feature
+            features_by_type[feature_type].append(feature)
+            
             if parent_id:
                 pending_children[parent_id].append(feature)
 
@@ -335,5 +338,3 @@ def load_gtf(gtf_path, chromosomes=None):
 
     logger.info(f"Loaded {len(features_map)} features.")
     return InMemoryFeatureDB(features_map, features_by_type)
-
-get_gtf_chromosomes = get_gtf_chromosomes
