@@ -239,10 +239,13 @@ def load_gtf(gtf_path, chromosomes=None):
                 fid = attr_map.get('gene_id', [None])[0]
             elif feature_type == 'transcript':
                 fid = attr_map.get('transcript_id', [None])[0]
-            else:
+            elif feature_type == 'exon':
                 fid = attr_map.get('exon_id', [None])[0]
-                if not fid:
-                    fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
+
+            if not fid:
+                # For exons without exon_id and other features like CDS, UTR, etc.,
+                # create a stable ID based on their properties.
+                fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
 
             if not fid: fid = f"unknown_{i}"
 
