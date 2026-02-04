@@ -219,6 +219,7 @@ def load_gtf(gtf_path, chromosomes=None):
     gene_id_counts = defaultdict(int)
     transcript_id_counts = defaultdict(int)
     exon_id_counts = defaultdict(int)
+    other_id_counts = defaultdict(int)
 
     open_func = gzip.open if gtf_path.endswith('.gz') else open
 
@@ -242,20 +243,22 @@ def load_gtf(gtf_path, chromosomes=None):
                 original_fid = attr_map.get('transcript_id', [None])[0]
             elif feature_type == 'exon':
                 original_fid = attr_map.get('exon_id', [None])[0]
+            else:
+                original_fid = attr_map.get('other_id', [None])[0]
 
             if not original_fid:
                 original_fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
             
             fid = original_fid
-            if feature_type in ['gene', 'transcript', 'mRNA', 'exon'] and fid in features_map:
+            if fid in features_map:
                 if feature_type == 'gene':
                     gene_id_counts[fid] += 1
                     fid = f"{fid}.{gene_id_counts[fid]}"
                 elif feature_type in ['transcript', 'mRNA']:
                     transcript_id_counts[fid] += 1
-                elif feature_type == 'exon':
-                    exon_id_counts[fid] += 1
-                    fid = f"{fid}.{exon_id_counts[fid]}"
+                else:
+                    other_id_counts[fid] += 1
+                    fid = f"{fid}.{other_id_counts[fid]}"
                 
                 # Update attribute map with new unique ID
                 if feature_type == 'gene' and 'gene_id' in attr_map:
@@ -264,19 +267,22 @@ def load_gtf(gtf_path, chromosomes=None):
                     attr_map['transcript_id'][0] = fid
                 elif feature_type == 'exon' and 'exon_id' in attr_map:
                     attr_map['exon_id'][0] = fid
+
             # Determine parent using original (pre-deduplication) IDs
             parent_id = None
             tid = attr_map.get('transcript_id', [None])[0]
             gid = attr_map.get('gene_id', [None])[0]
             eid = attr_map.get('exon_id', [None])[0]
+            oid = attr_map.get('other_id', [None])[0]
             
-            if feature_type not in ['gene', 'transcript', 'mRNA']:
-                if tid and transcript_id_counts[tid] > 0:
-                    tid = f"{tid}.{transcript_id_counts[tid]}"
-                if gid and gene_id_counts[gid] > 0:
-                    gid = f"{gid}.{gene_id_counts[gid]}"
-                if eid and exon_id_counts[eid] > 0:
-                    eid = f"{eid}.{exon_id_counts[eid]}"
+            if tid and transcript_id_counts[tid] > 0:
+                tid = f"{tid}.{transcript_id_counts[tid]}"
+            if gid and gene_id_counts[gid] > 0:
+                gid = f"{gid}.{gene_id_counts[gid]}"
+            if eid and exon_id_counts[eid] > 0:
+                eid = f"{eid}.{exon_id_counts[eid]}"
+            if oid and other_id_counts[oid] > 0:
+                oid = f"{oid}.{other_id_counts[oid]}"
 
             # Set parent ID based on hierarchy
             if tid and tid != fid:
@@ -285,6 +291,8 @@ def load_gtf(gtf_path, chromosomes=None):
                 parent_id = gid
             elif eid and eid != fid:
                 parent_id = eid
+            elif oid and oid != fid:
+                parent_id = oid
 
             # Create new feature - no merging
             feature = GTFFeature(
