@@ -242,7 +242,7 @@ def load_gtf(gtf_path, chromosomes=None):
             else:
                 fid = attr_map.get('exon_id', [None])[0]
                 if not fid:
-                    fid = f"{feature_type}:{seqid}:{parts[1]}:{parts[3]}-{parts[4]}:{parts[5]}:{parts[6]}:{parts[7]}"
+                    fid = f"{feature_type}:{seqid}:{parts[3]}-{parts[4]}:{parts[6]}:{parts[7]}"
 
             if not fid: fid = f"unknown_{i}"
 
